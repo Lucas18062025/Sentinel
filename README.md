@@ -1,4 +1,4 @@
-# 🛡️ Sentinel V5 "Apex"
+# 🛡️ Sentinel V5 "Apex" ⚡
 
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-blue?style=for-the-badge&logo=powershell&logoColor=white)](https://docs.microsoft.com/en-us/powershell/)
 [![Windows](https://img.shields.io/badge/Windows-11-0078D4?style=for-the-badge&logo=windows&logoColor=white)](https://www.microsoft.com/windows)
