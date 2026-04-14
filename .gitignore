@@ -1,0 +1,11 @@
+﻿# Logs generados por Sentinel
+*.log
+Logs/
+
+# Archivos de sistema Windows
+Thumbs.db
+desktop.ini
+
+# Archivos internos - no publicar
+POST_LINKEDIN.md
+CAPTURAS_GUIA.md
