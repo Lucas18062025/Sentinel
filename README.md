@@ -177,7 +177,7 @@ sentinel.ps1
 ## 👤 Autor
 
 **Lucas Villagra**  
-Cybersecurity Analyst | Ethical Hacker | SOC Analyst (en formación)  
+Cybersecurity Analyst | Ethical Hacker | SOC Analyst  
 📍 San Miguel de Tucumán, Argentina
 
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-lucas--villagra--cybersecurity-0A66C2?style=flat&logo=linkedin)](https://linkedin.com/in/lucas-villagra-cybersecurity)
