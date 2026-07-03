@@ -3,7 +3,7 @@
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-blue?style=for-the-badge&logo=powershell&logoColor=white)](https://docs.microsoft.com/en-us/powershell/)
 [![Windows](https://img.shields.io/badge/Windows-11-0078D4?style=for-the-badge&logo=windows&logoColor=white)](https://www.microsoft.com/windows)
 [![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-5.0%20Apex-red?style=for-the-badge)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/Version-5.4%20Apex-red?style=for-the-badge)](CHANGELOG.md)
 [![Security](https://img.shields.io/badge/Security-Audit%20Ready-orange?style=for-the-badge&logo=shield)](README.md)
 [![Maintained](https://img.shields.io/badge/Maintained-Yes-brightgreen?style=for-the-badge)](https://github.com/Lucas18062025)
 
