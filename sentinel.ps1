@@ -15,6 +15,26 @@
     v5.2 - Audio Stack Watchdog integrado:
       [NEW-3] $Script:AudioRestarted flag para trazabilidad del watchdog de audio
       [5c]    Seccion Audio Stack Watchdog - DPC storm prevention (incidente 20/06/2026)
+    v5.3 - Correccion de bugs de medicion (sesion 02/07/2026):
+      [FIX-5] Espacio Recuperado: Get-PSDrive.Free reemplazado por [System.IO.DriveInfo]
+              + conteo de bytes real por archivo eliminado ($Script:BytesFreed).
+              Causa raiz: Get-PSDrive cachea el valor de .Free en la sesion de PS 5.1,
+              generando "0 MB recuperados" pese a borrados reales confirmados.
+      [FIX-6] Audio Watchdog: reemplazado umbral sobre .CPU acumulado (tiempo total
+              desde el boot) por delta medido en ventana de 1.5s. .CPU de Get-Process
+              es TotalProcessorTime, no % instantaneo -> con uptime largo el umbral
+              fijo (500/300) se dispara siempre, generando falsos positivos y
+              reinicios de Audiosrv innecesarios.
+    v5.4 - Guard critico de host (sesion 02/07/2026, auditoria externa + revision conjunta):
+      [FIX-7] Reparacion de Windows Update (-Force) ahora verifica que TrustedInstaller
+              NO este activo antes de detener wuauserv/cryptsvc/UsoSvc y renombrar el
+              DataStore. Causa raiz: el script solo chequeaba instaladores activos para
+              decidir el modo de limpieza (Targets), pero NO antes de la reparacion con
+              -Force. Si -Force se ejecuta mientras TrustedInstaller esta aplicando una
+              actualizacion real (no solo escaneando), se podia interrumpir la instalacion
+              y potencialmente corromper el estado de Windows Update. Se aborta la
+              reparacion con log ERROR si se detecta instalacion en curso, en linea con
+              la regla fundamental: el host SIEMPRE debe permanecer operativo.
 #>
 
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium')]
@@ -37,10 +57,19 @@ $ExclusionRegex = '(\.log$|\.etl$|\.evtx$|\.dat$|\.tmp$|\.cache$|\.bak$|-lock-)'
 $Script:DeletedCount = 0
 $Script:LockedCount = 0
 $Script:TotalAnalyzed = 0
-$Script:GuardedMode = $false     # [NEW-1] Flag de trazabilidad para resguardo de instaladores
-$Script:UpdateRepaired = $false  # [NEW-2] Flag: auto-reparacion de DataStore ejecutada
-$Script:AudioRestarted = $false  # [NEW-3] Flag: audio stack watchdog triggered
-$DiskBefore = (Get-PSDrive C).Free
+$Script:BytesFreed = 0            # [FIX-5] Acumulador de bytes reales liberados (por archivo)
+$Script:GuardedMode = $false      # [NEW-1] Flag de trazabilidad para resguardo de instaladores
+$Script:UpdateRepaired = $false   # [NEW-2] Flag: auto-reparacion de DataStore ejecutada
+$Script:AudioRestarted = $false   # [NEW-3] Flag: audio stack watchdog triggered
+
+# [FIX-5] DriveInfo en vez de Get-PSDrive: lectura directa al FS, sin cache de sesion PS
+$SystemDriveLetter = $env:SystemDrive.TrimEnd('\')
+try {
+    $DiskBefore = ([System.IO.DriveInfo]::new($SystemDriveLetter)).AvailableFreeSpace
+}
+catch {
+    $DiskBefore = 0
+}
 
 # Pre-validacion del Directorio de Logs (Fuera de la funcion para ganar velocidad)
 if (-not (Test-Path $LogDir)) {
@@ -69,7 +98,7 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
     return
 }
 
-Write-SentinelLog "SENTINEL V5 APEX - INICIANDO" "SUCCESS"
+Write-SentinelLog "SENTINEL V5.4 APEX - INICIANDO" "SUCCESS"
 
 # --- 4. Motor de Limpieza (Streaming de 2 Etapas con Resguardo de Instaladores) ---
 
@@ -117,9 +146,11 @@ foreach ($Path in $Targets) {
             if ($IsOld -and -not $IsExcluded) {
                 try {
                     $ItemPath = $_.FullName
+                    $ItemSize = $_.Length   # [FIX-5] Capturar tamaño ANTES de borrar el objeto
                     if ($PSCmdlet.ShouldProcess($ItemPath, "Eliminar archivo")) {
                         Remove-Item $ItemPath -Force -ErrorAction Stop
                         $Script:DeletedCount++
+                        $Script:BytesFreed += $ItemSize   # [FIX-5] Sumar bytes reales liberados
                         if ($DetailedLog) { Write-SentinelLog "OK: $($_.Name)" "INFO" }
                     }
                 }
@@ -177,28 +208,41 @@ try {
 
         # Auto-reparacion: solo si se ejecuto con -Force, para no interrumpir el sistema solo
         if ($Force) {
-            Write-SentinelLog "Modo -Force activo: iniciando reparacion automatica del orquestador..." "WARN"
+            # [FIX-7] Guard critico: abortar si hay una instalacion de Update REAL en curso.
+            # TrustedInstaller activo en este punto puede significar que Windows esta
+            # aplicando una actualizacion, no solo escaneando. Detener servicios y
+            # renombrar el DataStore en ese momento puede corromper la instalacion.
+            # Regla fundamental: el host SIEMPRE debe quedar operativo -> se aborta,
+            # no se fuerza.
+            $InstallInProgress = Get-Process -Name "TrustedInstaller" -ErrorAction SilentlyContinue
 
-            # Paso 1: Detener el ecosistema de actualizaciones
-            Stop-Service -Name "UsoSvc", "wuauserv", "cryptsvc" -Force -ErrorAction SilentlyContinue
+            if ($InstallInProgress) {
+                Write-SentinelLog "ABORTADO: TrustedInstaller activo (instalacion en curso). No se reparara el DataStore para evitar corromper Windows Update. Reintenta mas tarde." "ERROR"
+            }
+            else {
+                Write-SentinelLog "Modo -Force activo: iniciando reparacion automatica del orquestador..." "WARN"
 
-            # Paso 2: Aislar el DataStore corrupto (mismo procedimiento del 22/05)
-            $OldStore = "C:\Windows\SoftwareDistribution\DataStore.old"
-            if (Test-Path $OldStore) { Remove-Item $OldStore -Recurse -Force -ErrorAction SilentlyContinue }
-            Rename-Item -Path "C:\Windows\SoftwareDistribution\DataStore" `
-                -NewName "DataStore.old" -ErrorAction SilentlyContinue
+                # Paso 1: Detener el ecosistema de actualizaciones
+                Stop-Service -Name "UsoSvc", "wuauserv", "cryptsvc" -Force -ErrorAction SilentlyContinue
 
-            # Paso 3: Reiniciar servicios - Windows reconstruye DataStore.edb automaticamente
-            Start-Service -Name "cryptsvc" -ErrorAction SilentlyContinue
-            Start-Service -Name "wuauserv" -ErrorAction SilentlyContinue
-            Start-Service -Name "UsoSvc"   -ErrorAction SilentlyContinue
+                # Paso 2: Aislar el DataStore corrupto (mismo procedimiento del 22/05)
+                $OldStore = "C:\Windows\SoftwareDistribution\DataStore.old"
+                if (Test-Path $OldStore) { Remove-Item $OldStore -Recurse -Force -ErrorAction SilentlyContinue }
+                Rename-Item -Path "C:\Windows\SoftwareDistribution\DataStore" `
+                    -NewName "DataStore.old" -ErrorAction SilentlyContinue
 
-            # Paso 4: Forzar re-escaneo limpio del orquestador
-            Start-Sleep -Seconds 3
-            usoclient StartScan
+                # Paso 3: Reiniciar servicios - Windows reconstruye DataStore.edb automaticamente
+                Start-Service -Name "cryptsvc" -ErrorAction SilentlyContinue
+                Start-Service -Name "wuauserv" -ErrorAction SilentlyContinue
+                Start-Service -Name "UsoSvc"   -ErrorAction SilentlyContinue
 
-            Write-SentinelLog "Reparacion completada. DataStore regenerado por Windows." "SUCCESS"
-            $Script:UpdateRepaired = $true
+                # Paso 4: Forzar re-escaneo limpio del orquestador
+                Start-Sleep -Seconds 3
+                usoclient StartScan
+
+                Write-SentinelLog "Reparacion completada. DataStore regenerado por Windows." "SUCCESS"
+                $Script:UpdateRepaired = $true
+            }
         }
         else {
             # Sin -Force: solo avisar, no tocar nada
@@ -218,15 +262,37 @@ catch {
 }
 
 # --- 5c. Audio Stack Watchdog (KB5094126 DPC Storm Prevention) ---
-# Detects System/DWM CPU anomaly caused by Windows Update kernel interactions.
-# Auto-restarts audio stack if threshold exceeded. Incident: 20/06/2026.
+# [FIX-6] v5.3: Detects REAL-TIME anomaly via delta sampling, not accumulated CPU time.
+# Get-Process .CPU is TotalProcessorTime (seconds since process start), NOT instant %.
+# Sampling twice over a fixed window isolates actual current load, avoiding false
+# positives on hosts with long uptime. Incident baseline: 20/06/2026.
 Write-SentinelLog "Verificando Audio Stack..." "INFO"
 try {
-    $systemCPU = (Get-Process -Name "System" -ErrorAction SilentlyContinue).CPU
-    $dwmCPU = (Get-Process -Name "dwm"    -ErrorAction SilentlyContinue).CPU
+    # Ventana de muestreo en segundos - ajustable, 1.5s balancea precision vs velocidad
+    $SampleWindowSeconds = 1.5
 
-    if ($systemCPU -gt 500 -or $dwmCPU -gt 300) {
-        Write-SentinelLog "ALERTA Audio: System=$([Math]::Round($systemCPU,1)) / DWM=$([Math]::Round($dwmCPU,1)) - reiniciando stack..." "WARN"
+    # Sample 1 (t0)
+    $sysCPU_t0 = (Get-Process -Name "System" -ErrorAction SilentlyContinue).CPU
+    $dwmCPU_t0 = (Get-Process -Name "dwm"    -ErrorAction SilentlyContinue).CPU
+
+    Start-Sleep -Milliseconds ([int]($SampleWindowSeconds * 1000))
+
+    # Sample 2 (t1)
+    $sysCPU_t1 = (Get-Process -Name "System" -ErrorAction SilentlyContinue).CPU
+    $dwmCPU_t1 = (Get-Process -Name "dwm"    -ErrorAction SilentlyContinue).CPU
+
+    # Delta = CPU-segundos consumidos DURANTE la ventana = carga real actual
+    $sysDelta = if ($sysCPU_t0 -and $sysCPU_t1) { $sysCPU_t1 - $sysCPU_t0 } else { 0 }
+    $dwmDelta = if ($dwmCPU_t0 -and $dwmCPU_t1) { $dwmCPU_t1 - $dwmCPU_t0 } else { 0 }
+
+    # Umbrales sobre la ventana de muestreo (NO acumulado desde boot):
+    # >0.8s de CPU-time de System en 1.5s reales, o >0.6s de DWM = anomalo.
+    # CALIBRAR estos valores contra una corrida en frio (baseline sin carga) en tu HP Ryzen 5.
+    $SysThreshold = 0.8
+    $DwmThreshold = 0.6
+
+    if ($sysDelta -gt $SysThreshold -or $dwmDelta -gt $DwmThreshold) {
+        Write-SentinelLog "ALERTA Audio: SystemDelta=$([Math]::Round($sysDelta,2))s / DWMDelta=$([Math]::Round($dwmDelta,2))s en $($SampleWindowSeconds)s - reiniciando stack..." "WARN"
 
         # Restart audio stack - safe, reversible, no data loss
         Stop-Service  "AudioEndpointBuilder" -Force -ErrorAction SilentlyContinue
@@ -237,14 +303,14 @@ try {
 
         # Dedicated watchdog log for incident traceability
         $WatchdogLog = Join-Path $LogDir "audio_watchdog.log"
-        $WatchdogMsg = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') | System=$systemCPU | DWM=$dwmCPU | Audio stack restarted"
+        $WatchdogMsg = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') | SystemDelta=$sysDelta | DWMDelta=$dwmDelta | Window=${SampleWindowSeconds}s | Audio stack restarted"
         Add-Content $WatchdogLog $WatchdogMsg -ErrorAction SilentlyContinue
 
         Write-SentinelLog "Audio Stack reiniciado. Log: $WatchdogLog" "SUCCESS"
         $Script:AudioRestarted = $true
     }
     else {
-        Write-SentinelLog "Audio Stack OK - System=$([Math]::Round($systemCPU,1)) / DWM=$([Math]::Round($dwmCPU,1))" "INFO"
+        Write-SentinelLog "Audio Stack OK - SystemDelta=$([Math]::Round($sysDelta,2))s / DWMDelta=$([Math]::Round($dwmDelta,2))s en $($SampleWindowSeconds)s" "INFO"
         $Script:AudioRestarted = $false
     }
 }
@@ -253,16 +319,28 @@ catch {
 }
 
 # --- 6. Metricas y Resumen Final ---
-$DiskAfter = (Get-PSDrive C).Free
-$SavedMB = [Math]::Round(($DiskAfter - $DiskBefore) / 1MB, 2)
-if ($SavedMB -lt 0) { $SavedMB = 0 }
+# [FIX-5] Espacio Recuperado ahora se basa en bytes reales sumados por archivo eliminado,
+# no en la diferencia de disco (que Get-PSDrive/DriveInfo puede ver alterada por
+# procesos externos como TiWorker corriendo en paralelo).
+$SavedMB = [Math]::Round($Script:BytesFreed / 1MB, 2)
+
+# DriveInfo post-limpieza se mantiene solo como dato informativo/diagnostico,
+# ya no se usa para calcular el espacio recuperado.
+try {
+    $DiskAfter = ([System.IO.DriveInfo]::new($SystemDriveLetter)).AvailableFreeSpace
+    $DiskDeltaMB = [Math]::Round(($DiskAfter - $DiskBefore) / 1MB, 2)
+}
+catch {
+    $DiskDeltaMB = "N/D"
+}
 
 Write-Host "`n$("="*50)" -ForegroundColor Cyan
 Write-SentinelLog "RESUMEN EJECUTIVO" "SUCCESS"
 Write-SentinelLog "Total Analizados:   $Script:TotalAnalyzed"
 Write-SentinelLog "Total Eliminados:   $Script:DeletedCount"
 Write-SentinelLog "Bloqueados/Uso:     $Script:LockedCount"
-Write-SentinelLog "Espacio Recuperado: $SavedMB MB" "SUCCESS"
+Write-SentinelLog "Espacio Recuperado: $SavedMB MB (medicion por archivo)" "SUCCESS"
+Write-SentinelLog "Delta Disco Total:  $DiskDeltaMB MB (referencia, incluye actividad externa)" "INFO"
 
 # [NEW-1] Reportar modo de ejecucion en el log de auditoria
 if ($Script:GuardedMode) {
