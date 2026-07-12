@@ -98,8 +98,7 @@ Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process
 ---
 ## 🎬 Ejecución en Vivo
 
-![Sentinel V5.4 Apex - Ejecución](./SentinelV5_4.png)
-
+![Sentinel V5.4 Apex - Ejecución](https://raw.githubusercontent.com/Lucas18062025/Sentinel/main/SentinelV5_4.png)
 *Motor de auditoría ejecutándose: validación de firewall, logs coloreados, métricas de disco y resumen ejecutivo con evidencia forense.*
 
 ---
