@@ -6,6 +6,7 @@
 [![Version](https://img.shields.io/badge/Version-5.4%20Apex-red?style=for-the-badge)](CHANGELOG.md)
 [![Security](https://img.shields.io/badge/Security-Audit%20Ready-orange?style=for-the-badge&logo=shield)](README.md)
 [![Maintained](https://img.shields.io/badge/Maintained-Yes-brightgreen?style=for-the-badge)](https://github.com/Lucas18062025)
+[![Contributors](https://img.shields.io/github/contributors/Lucas18062025/Sentinel)](https://github.com/Lucas18062025/Sentinel/graphs/contributors)
 
 > **Motor de Mantenimiento y Auditoría de Seguridad para Windows 11**  
 > Desarrollado con enfoque en rendimiento, seguridad y trazabilidad forense.
