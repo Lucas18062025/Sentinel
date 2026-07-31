@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Sentinel V5 Apex: mantenimiento, limpieza inteligente y auditoría de seguridad para Windows."
+    />
+    <meta name="theme-color" content="#07110e" />
+    <title>Sentinel V5 Apex — Seguridad operativa para Windows</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="script.js" defer></script>
+  </head>
+  <body>
+    <div class="noise" aria-hidden="true"></div>
+    <header class="site-header">
+      <a class="brand" href="#inicio" aria-label="Sentinel, volver al inicio">
+        <span class="brand-mark" aria-hidden="true">S</span>
+        <span>SENTINEL <strong>APEX</strong></span>
+      </a>
+      <nav aria-label="Navegación principal">
+        <a href="#capacidades">Capacidades</a>
+        <a href="#operacion">Operación</a>
+        <a href="#evidencia">Evidencia</a>
+      </nav>
+      <a class="header-cta" href="sentinel.ps1" download>Descargar .PS1</a>
+    </header>
+
+    <main>
+      <section class="hero" id="inicio">
+        <div class="hero-copy">
+          <p class="eyebrow"><span></span> Windows defense utility / V5.4</p>
+          <h1>Un sistema limpio.<br /><em>Una postura segura.</em></h1>
+          <p class="hero-intro">
+            Sentinel combina mantenimiento inteligente, auditoría activa del firewall y
+            evidencia forense en un único motor PowerShell para Windows.
+          </p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="sentinel.ps1" download>
+              Descargar Sentinel <span aria-hidden="true">↓</span>
+            </a>
+            <button class="button button-ghost" type="button" data-copy-command=".\sentinel.ps1 -WhatIf">
+              <span class="prompt" aria-hidden="true">&gt;_</span>
+              <span data-copy-label>Copiar modo seguro</span>
+            </button>
+          </div>
+          <ul class="compatibility" aria-label="Compatibilidad">
+            <li>PowerShell 5.1+</li>
+            <li>Windows 10 / 11</li>
+            <li>Licencia MIT</li>
+          </ul>
+        </div>
+
+        <div class="hero-visual" aria-label="Vista de ejecución de Sentinel">
+          <div class="radar" aria-hidden="true">
+            <span class="radar-ring ring-one"></span>
+            <span class="radar-ring ring-two"></span>
+            <span class="radar-sweep"></span>
+            <span class="radar-core"></span>
+          </div>
+          <div class="status-card status-card-top">
+            <span class="status-dot"></span>
+            <span>Firewall monitor</span>
+            <strong>ACTIVO</strong>
+          </div>
+          <div class="terminal-card">
+            <div class="terminal-bar">
+              <span></span><span></span><span></span>
+              <p>Administrator: PowerShell</p>
+            </div>
+            <div class="terminal-body" aria-hidden="true">
+              <p class="muted">PS C:\Sentinel&gt; .\sentinel.ps1</p>
+              <p><span class="ok">[SUCCESS]</span> SENTINEL V5 APEX — INICIANDO</p>
+              <p><span class="warn">[SCAN]</span> Analizando archivos temporales...</p>
+              <p><span class="ok">[SECURE]</span> Firewall Domain: ACTIVO</p>
+              <p><span class="ok">[SECURE]</span> Firewall Private: ACTIVO</p>
+              <div class="terminal-progress"><span></span></div>
+              <div class="terminal-stats">
+                <div><small>ANALIZADOS</small><strong>1,247</strong></div>
+                <div><small>RECUPERADO</small><strong>142.5 MB</strong></div>
+              </div>
+            </div>
+          </div>
+          <div class="version-stamp" aria-hidden="true">05.4</div>
+        </div>
+      </section>
+
+      <section class="manifesto" aria-label="Principio de Sentinel">
+        <p>NO ES SOLO LIMPIEZA.</p>
+        <h2>Es mantenimiento con <span>trazabilidad.</span></h2>
+      </section>
+
+      <section class="capabilities" id="capacidades">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow"><span></span> Núcleo operativo</p>
+            <h2>Diseñado para actuar.<br />Preparado para auditar.</h2>
+          </div>
+          <p>
+            Cada acción prioriza la estabilidad del host, reduce residuos innecesarios y deja
+            evidencia verificable de la ejecución.
+          </p>
+        </div>
+
+        <div class="feature-grid">
+          <article class="feature feature-main">
+            <p class="feature-index">01 / MAINTENANCE</p>
+            <div class="feature-icon" aria-hidden="true">⌁</div>
+            <h3>Limpieza inteligente</h3>
+            <p>
+              Motor de streaming de dos etapas, filtro por antigüedad y exclusiones que protegen
+              archivos críticos o actualmente en uso.
+            </p>
+            <ul>
+              <li>Procesamiento sin carga masiva en RAM</li>
+              <li>Antigüedad mínima configurable</li>
+              <li>Métricas reales de espacio recuperado</li>
+            </ul>
+          </article>
+          <article class="feature">
+            <p class="feature-index">02 / DEFENSE</p>
+            <div class="feature-icon" aria-hidden="true">◈</div>
+            <h3>Auditoría activa</h3>
+            <p>Comprueba en tiempo real los perfiles Domain, Private y Public del firewall.</p>
+            <span class="feature-signal"><i></i> Monitoreo habilitado</span>
+          </article>
+          <article class="feature">
+            <p class="feature-index">03 / FORENSICS</p>
+            <div class="feature-icon" aria-hidden="true">⌗</div>
+            <h3>Evidencia forense</h3>
+            <p>Genera logs con niveles, tiempos y un resumen ejecutivo de cada operación.</p>
+            <code>C:\Logs\Sentinel\</code>
+          </article>
+        </div>
+      </section>
+
+      <section class="operation" id="operacion">
+        <div class="operation-panel">
+          <p class="eyebrow"><span></span> Despliegue controlado</p>
+          <h2>Primero observá.<br />Después decidí.</h2>
+          <p>
+            Ejecutá Sentinel en modo simulación para revisar cada acción antes de modificar el
+            sistema. La seguridad operativa empieza por no asumir.
+          </p>
+          <div class="command-line">
+            <code>PS&gt; .\sentinel.ps1 -WhatIf</code>
+            <button type="button" data-copy-command=".\sentinel.ps1 -WhatIf" aria-label="Copiar comando">
+              Copiar
+            </button>
+          </div>
+          <p class="operation-note">Requiere PowerShell como Administrador.</p>
+        </div>
+        <ol class="steps">
+          <li><span>01</span><div><strong>Descargá</strong><p>Guardá el script en una carpeta local.</p></div></li>
+          <li><span>02</span><div><strong>Simulá</strong><p>Usá <code>-WhatIf</code> para validar el alcance.</p></div></li>
+          <li><span>03</span><div><strong>Ejecutá</strong><p>Iniciá PowerShell con permisos elevados.</p></div></li>
+          <li><span>04</span><div><strong>Auditá</strong><p>Revisá el log y el resumen de resultados.</p></div></li>
+        </ol>
+      </section>
+
+      <section class="evidence" id="evidencia">
+        <div class="evidence-copy">
+          <p class="eyebrow"><span></span> Ejecución real</p>
+          <h2>La evidencia<br />también es parte<br />del resultado.</h2>
+          <p>La consola muestra progreso, alertas, estado defensivo y métricas finales.</p>
+          <a href="https://github.com/Lucas18062025/Sentinel" target="_blank" rel="noreferrer">
+            Ver código fuente <span aria-hidden="true">↗</span>
+          </a>
+        </div>
+        <figure>
+          <img
+            src="SentinelV5.4.png"
+            alt="Captura de Sentinel V5.4 ejecutándose en PowerShell"
+            width="1354"
+            height="784"
+            loading="lazy"
+          />
+          <figcaption>Sentinel V5.4 / sesión operativa</figcaption>
+        </figure>
+      </section>
+
+      <section class="final-cta">
+        <p>WINDOWS MAINTENANCE / SECURITY AUDIT / FORENSIC LOGGING</p>
+        <h2>Tomá el control del host.</h2>
+        <a class="button button-primary" href="sentinel.ps1" download>
+          Descargar Sentinel V5.4 <span aria-hidden="true">↓</span>
+        </a>
+      </section>
+    </main>
+
+    <footer>
+      <a class="brand" href="#inicio"><span class="brand-mark" aria-hidden="true">S</span><span>SENTINEL</span></a>
+      <p>Desarrollado por Lucas Villagra · Tucumán, Argentina</p>
+      <div>
+        <a href="https://github.com/Lucas18062025" target="_blank" rel="noreferrer">GitHub</a>
+        <a href="https://linkedin.com/in/lucas-villagra-cybersecurity" target="_blank" rel="noreferrer">LinkedIn</a>
+      </div>
+    </footer>
+  </body>
+</html>

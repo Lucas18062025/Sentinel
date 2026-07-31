@@ -13,6 +13,24 @@
 
 ---
 
+## 🌐 Sitio web
+
+La landing de Sentinel está incluida como un sitio estático listo para publicar en Netlify. No
+requiere instalar dependencias ni ejecutar un proceso de compilación.
+
+- `index.html`: estructura y contenido de la landing.
+- `styles.css`: diseño responsive y animaciones.
+- `script.js`: copia de comandos al portapapeles.
+- `netlify.toml`: publicación desde la raíz y cabeceras de seguridad.
+
+Para probarla localmente con el entorno de Netlify:
+
+```bash
+netlify dev --port 8889
+```
+
+---
+
 ## 📋 Tabla de Contenidos
 
 - [¿Qué hace Sentinel?](#-qué-hace-sentinel)

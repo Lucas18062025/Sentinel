@@ -1,0 +1,15 @@
+[build]
+  publish = "."
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    X-Frame-Options = "DENY"
+
+[[headers]]
+  for = "/sentinel.ps1"
+  [headers.values]
+    Content-Disposition = "attachment; filename=sentinel.ps1"
+    Content-Type = "text/plain; charset=utf-8"
