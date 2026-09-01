@@ -61,6 +61,7 @@ $Script:BytesFreed = 0            # [FIX-5] Acumulador de bytes reales liberados
 $Script:GuardedMode = $false      # [NEW-1] Flag de trazabilidad para resguardo de instaladores
 $Script:UpdateRepaired = $false   # [NEW-2] Flag: auto-reparacion de DataStore ejecutada
 $Script:AudioRestarted = $false   # [NEW-3] Flag: audio stack watchdog triggered
+$Script:AudioWatchdogCooldownUntil = @{ System = [DateTime]::MinValue; DWM = [DateTime]::MinValue }
 
 # [FIX-5] DriveInfo en vez de Get-PSDrive: lectura directa al FS, sin cache de sesion PS
 $SystemDriveLetter = $env:SystemDrive.TrimEnd('\')
@@ -271,19 +272,35 @@ try {
     # Ventana de muestreo en segundos - ajustable, 1.5s balancea precision vs velocidad
     $SampleWindowSeconds = 1.5
 
-    # Sample 1 (t0)
-    $sysCPU_t0 = (Get-Process -Name "System" -ErrorAction SilentlyContinue).CPU
-    $dwmCPU_t0 = (Get-Process -Name "dwm"    -ErrorAction SilentlyContinue).CPU
+    # Sample 1 (t0): normalizar a valores numericos validos, o $null si el proceso no existe.
+    $sysProcess_t0 = Get-Process -Name "System" -ErrorAction SilentlyContinue
+    $dwmProcess_t0 = Get-Process -Name "dwm" -ErrorAction SilentlyContinue
+    $sysCPU_t0 = if ($null -ne $sysProcess_t0) { [double]$sysProcess_t0.CPU } else { $null }
+    $dwmCPU_t0 = if ($null -ne $dwmProcess_t0) { [double]$dwmProcess_t0.CPU } else { $null }
 
     Start-Sleep -Milliseconds ([int]($SampleWindowSeconds * 1000))
 
-    # Sample 2 (t1)
-    $sysCPU_t1 = (Get-Process -Name "System" -ErrorAction SilentlyContinue).CPU
-    $dwmCPU_t1 = (Get-Process -Name "dwm"    -ErrorAction SilentlyContinue).CPU
+    # Sample 2 (t1): lo mismo, para evitar errores cuando el proceso no existe o termina durante la ventana.
+    $sysProcess_t1 = Get-Process -Name "System" -ErrorAction SilentlyContinue
+    $dwmProcess_t1 = Get-Process -Name "dwm" -ErrorAction SilentlyContinue
+    $sysCPU_t1 = if ($null -ne $sysProcess_t1) { [double]$sysProcess_t1.CPU } else { $null }
+    $dwmCPU_t1 = if ($null -ne $dwmProcess_t1) { [double]$dwmProcess_t1.CPU } else { $null }
 
-    # Delta = CPU-segundos consumidos DURANTE la ventana = carga real actual
-    $sysDelta = if ($sysCPU_t0 -and $sysCPU_t1) { $sysCPU_t1 - $sysCPU_t0 } else { 0 }
-    $dwmDelta = if ($dwmCPU_t0 -and $dwmCPU_t1) { $dwmCPU_t1 - $dwmCPU_t0 } else { 0 }
+    # Delta = CPU-segundos consumidos DURANTE la ventana = carga real actual.
+    # Get-Process.CPU ya devuelve un double en segundos (no un TimeSpan), así que
+    # la resta genera el delta directamente; si el proceso no existe o el valor es raro,
+    # se deja en 0.0 para evitar falsos negativos en la comparación.
+    $sysDelta = 0.0
+    if ($null -ne $sysCPU_t0 -and $null -ne $sysCPU_t1) {
+        $sysDelta = [double]$sysCPU_t1 - [double]$sysCPU_t0
+        if ($sysDelta -lt 0) { $sysDelta = 0.0 }
+    }
+
+    $dwmDelta = 0.0
+    if ($null -ne $dwmCPU_t0 -and $null -ne $dwmCPU_t1) {
+        $dwmDelta = [double]$dwmCPU_t1 - [double]$dwmCPU_t0
+        if ($dwmDelta -lt 0) { $dwmDelta = 0.0 }
+    }
 
     # Umbrales sobre la ventana de muestreo (NO acumulado desde boot):
     # >0.8s de CPU-time de System en 1.5s reales, o >0.6s de DWM = anomalo.
@@ -291,8 +308,37 @@ try {
     $SysThreshold = 0.8
     $DwmThreshold = 0.6
 
-    if ($sysDelta -gt $SysThreshold -or $dwmDelta -gt $DwmThreshold) {
-        Write-SentinelLog "ALERTA Audio: SystemDelta=$([Math]::Round($sysDelta,2))s / DWMDelta=$([Math]::Round($dwmDelta,2))s en $($SampleWindowSeconds)s - reiniciando stack..." "WARN"
+    # Diagnostico legible: muestra el estado real de cada muestreo para entender por que se disparo.
+    $sysT0Text = if ($null -ne $sysCPU_t0) { [string][Math]::Round([double]$sysCPU_t0, 4) } else { "N/A" }
+    $sysT1Text = if ($null -ne $sysCPU_t1) { [string][Math]::Round([double]$sysCPU_t1, 4) } else { "N/A" }
+    $dwmT0Text = if ($null -ne $dwmCPU_t0) { [string][Math]::Round([double]$dwmCPU_t0, 4) } else { "N/A" }
+    $dwmT1Text = if ($null -ne $dwmCPU_t1) { [string][Math]::Round([double]$dwmCPU_t1, 4) } else { "N/A" }
+    $sysPresent = ($null -ne $sysCPU_t0 -and $null -ne $sysCPU_t1)
+    $dwmPresent = ($null -ne $dwmCPU_t0 -and $null -ne $dwmCPU_t1)
+
+    $WatchdogDiagnosis = "System[t0=$sysT0Text,t1=$sysT1Text,delta=$([Math]::Round($sysDelta,2))s,threshold=$SysThreshold] | DWM[t0=$dwmT0Text,t1=$dwmT1Text,delta=$([Math]::Round($dwmDelta,2))s,threshold=$DwmThreshold] | window=${SampleWindowSeconds}s"
+    $Now = Get-Date
+    $CooldownSeconds = 30
+
+    $CooldownActive = @()
+    if ($Now -lt $Script:AudioWatchdogCooldownUntil.System) {
+        $CooldownActive += "System=$([Math]::Round(($Script:AudioWatchdogCooldownUntil.System - $Now).TotalSeconds, 1))s"
+    }
+    if ($Now -lt $Script:AudioWatchdogCooldownUntil.DWM) {
+        $CooldownActive += "DWM=$([Math]::Round(($Script:AudioWatchdogCooldownUntil.DWM - $Now).TotalSeconds, 1))s"
+    }
+
+    if ($CooldownActive.Count -gt 0) {
+        $CooldownReason = "cooldown-active | " + ($CooldownActive -join ' ; ')
+        Write-SentinelLog "Audio Stack Watchdog en cooldown: $CooldownReason | diagnostico: $WatchdogDiagnosis" "WARN"
+        $Script:AudioRestarted = $false
+    }
+    elseif ($sysDelta -gt $SysThreshold -or $dwmDelta -gt $DwmThreshold) {
+        $TriggerReason = @()
+        if ($sysDelta -gt $SysThreshold) { $TriggerReason += "System" }
+        if ($dwmDelta -gt $DwmThreshold) { $TriggerReason += "DWM" }
+
+        Write-SentinelLog "ALERTA Audio: $WatchdogDiagnosis | trigger=threshold-exceeded | reason=$($TriggerReason -join ',') | accion=reinicio de stack | cooldown=${CooldownSeconds}s" "WARN"
 
         # Restart audio stack - safe, reversible, no data loss
         Stop-Service  "AudioEndpointBuilder" -Force -ErrorAction SilentlyContinue
@@ -303,19 +349,23 @@ try {
 
         # Dedicated watchdog log for incident traceability
         $WatchdogLog = Join-Path $LogDir "audio_watchdog.log"
-        $WatchdogMsg = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') | SystemDelta=$sysDelta | DWMDelta=$dwmDelta | Window=${SampleWindowSeconds}s | Audio stack restarted"
+        $WatchdogMsg = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') | $WatchdogDiagnosis | trigger=threshold-exceeded | reason=$($TriggerReason -join ',') | accion=audio stack restarted | cooldown=${CooldownSeconds}s"
         Add-Content $WatchdogLog $WatchdogMsg -ErrorAction SilentlyContinue
+
+        if ($sysDelta -gt $SysThreshold) { $Script:AudioWatchdogCooldownUntil.System = (Get-Date).AddSeconds($CooldownSeconds) }
+        if ($dwmDelta -gt $DwmThreshold) { $Script:AudioWatchdogCooldownUntil.DWM = (Get-Date).AddSeconds($CooldownSeconds) }
 
         Write-SentinelLog "Audio Stack reiniciado. Log: $WatchdogLog" "SUCCESS"
         $Script:AudioRestarted = $true
     }
     else {
-        Write-SentinelLog "Audio Stack OK - SystemDelta=$([Math]::Round($sysDelta,2))s / DWMDelta=$([Math]::Round($dwmDelta,2))s en $($SampleWindowSeconds)s" "INFO"
+        $MissingSampleNote = if (-not $sysPresent -or -not $dwmPresent) { " | note=proceso ausente en una de las muestras; delta forzado a 0" } else { "" }
+        Write-SentinelLog "Audio Stack OK - $WatchdogDiagnosis$MissingSampleNote" "INFO"
         $Script:AudioRestarted = $false
     }
 }
 catch {
-    Write-SentinelLog "No se pudo auditar el Audio Stack" "WARN"
+    Write-SentinelLog "No se pudo auditar el Audio Stack: $($_.Exception.Message)" "WARN"
 }
 
 # --- 6. Metricas y Resumen Final ---
@@ -323,6 +373,7 @@ catch {
 # no en la diferencia de disco (que Get-PSDrive/DriveInfo puede ver alterada por
 # procesos externos como TiWorker corriendo en paralelo).
 $SavedMB = [Math]::Round($Script:BytesFreed / 1MB, 2)
+$SavedBytes = $Script:BytesFreed
 
 # DriveInfo post-limpieza se mantiene solo como dato informativo/diagnostico,
 # ya no se usa para calcular el espacio recuperado.
@@ -334,13 +385,21 @@ catch {
     $DiskDeltaMB = "N/D"
 }
 
+# El delta del disco es solo referencia del sistema; puede fluctuar por procesos del SO,
+# antivirus, actualizaciones o el propio filesystem. Si no hubo borrados reales, no debe
+# interpretarse como espacio recuperado.
+if ($Script:DeletedCount -eq 0) {
+    $DiskDeltaMB = 0
+}
+
 Write-Host "`n$("="*50)" -ForegroundColor Cyan
 Write-SentinelLog "RESUMEN EJECUTIVO" "SUCCESS"
-Write-SentinelLog "Total Analizados:   $Script:TotalAnalyzed"
-Write-SentinelLog "Total Eliminados:   $Script:DeletedCount"
-Write-SentinelLog "Bloqueados/Uso:     $Script:LockedCount"
-Write-SentinelLog "Espacio Recuperado: $SavedMB MB (medicion por archivo)" "SUCCESS"
-Write-SentinelLog "Delta Disco Total:  $DiskDeltaMB MB (referencia, incluye actividad externa)" "INFO"
+Write-SentinelLog "Archivos Analizados: $Script:TotalAnalyzed"
+Write-SentinelLog "Eliminados Reales:   $Script:DeletedCount"
+Write-SentinelLog "Bytes Liberados:     $SavedBytes B ($SavedMB MB)"
+Write-SentinelLog "Bloqueados/Uso:      $Script:LockedCount"
+Write-SentinelLog "Delta Disco (ref):   $DiskDeltaMB MB" "INFO"
+Write-SentinelLog "Nota: Delta disco es referencia del sistema, no un indicador de espacio recuperado real." "WARN"
 
 # [NEW-1] Reportar modo de ejecucion en el log de auditoria
 if ($Script:GuardedMode) {
