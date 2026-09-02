@@ -117,7 +117,7 @@ Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process
 ---
 ## 🎬 Ejecución en Vivo
 
-![Sentinel V5.4 Apex - Ejecución](https://raw.githubusercontent.com/Lucas18062025/Sentinel/main/SentinelV5.4.png)
+![Sentinel V7 Apex - Ejecución](https://raw.githubusercontent.com/Lucas18062025/Sentinel/main/SentinelV7.jpeg)
 ---
 
 ## 🎛️ Parámetros
