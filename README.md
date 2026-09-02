@@ -189,9 +189,9 @@ sentinel.ps1
 
 ## 🗺️ Roadmap
 
-- [ ] **V6** — Auditoría de servicios con estado anómalo
-- [ ] **V6** — Integración con Event Viewer (errores críticos últimas 24hs)
-- [ ] **V7** — Módulo de detección de conexiones de red sospechosas (`Get-NetTCPConnection`)
+- [x] **V6** — Auditoría de servicios con estado anómalo
+- [x] **V6** — Integración con Event Viewer (errores críticos últimas 24hs)
+- [x] **V7** — Módulo de detección de conexiones de red sospechosas (`Get-NetTCPConnection`)
 - [ ] **V7** — Export de resumen en formato HTML para reportes
 - [ ] **V8** — Integración con Telegram Bot para alertas remotas
 
