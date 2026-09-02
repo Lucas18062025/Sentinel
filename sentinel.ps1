@@ -62,6 +62,7 @@ $Script:GuardedMode = $false      # [NEW-1] Flag de trazabilidad para resguardo 
 $Script:UpdateRepaired = $false   # [NEW-2] Flag: auto-reparacion de DataStore ejecutada
 $Script:AudioRestarted = $false   # [NEW-3] Flag: audio stack watchdog triggered
 $Script:AudioWatchdogCooldownUntil = @{ System = [DateTime]::MinValue; DWM = [DateTime]::MinValue }
+$Script:AuditFindings = @()
 
 # [FIX-5] DriveInfo en vez de Get-PSDrive: lectura directa al FS, sin cache de sesion PS
 $SystemDriveLetter = $env:SystemDrive.TrimEnd('\')
@@ -97,6 +98,22 @@ function Write-SentinelLog {
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     Write-Error "CRITICO: Debes ejecutar como Administrador."
     return
+}
+
+function Add-AuditFinding {
+    param(
+        [string]$Title,
+        [string]$Detail,
+        [string]$Level = "WARN"
+    )
+
+    $Entry = [pscustomobject]@{
+        Level   = $Level
+        Message = "$Title - $Detail"
+    }
+
+    $Script:AuditFindings += $Entry
+    return $Entry
 }
 
 Write-SentinelLog "SENTINEL V5.4 APEX - INICIANDO" "SUCCESS"
@@ -262,6 +279,125 @@ catch {
     Write-SentinelLog "No se pudo auditar el Orquestador de actualizaciones" "WARN"
 }
 
+# --- 5d. Auditoria de servicios con estado anomalo ---
+Write-SentinelLog "Verificando servicios del sistema..." "INFO"
+try {
+    $CriticalServices = @(
+        "AudioEndpointBuilder",
+        "Audiosrv",
+        "wuauserv",
+        "cryptsvc",
+        "UsoSvc",
+        "WinDefend",
+        "Dnscache",
+        "Spooler"
+    )
+
+    $ServiceAudit = Get-CimInstance Win32_Service -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -in $CriticalServices }
+
+    if ($null -ne $ServiceAudit) {
+        foreach ($svc in $ServiceAudit) {
+            $IsNormallyIdle = ($svc.Name -eq "wuauserv" -and $svc.StartMode -eq "Manual" -and $svc.State -eq "Stopped")
+            if (($svc.State -ne "Running") -and -not $IsNormallyIdle) {
+                $SvcMessage = "Servicio anomalo: [$($svc.Name)] Estado=$($svc.State) StartMode=$($svc.StartMode)"
+                Add-AuditFinding "Servicio anomalo" "[$($svc.Name)] Estado=$($svc.State) StartMode=$($svc.StartMode)" "WARN"
+                Write-SentinelLog $SvcMessage "WARN"
+            }
+        }
+    }
+    else {
+        Write-SentinelLog "Servicios criticos: sin datos disponibles." "INFO"
+    }
+}
+catch {
+    Write-SentinelLog "No se pudo auditar servicios criticos" "WARN"
+}
+
+# --- 5e. Event Viewer (errores criticos ultimas 24h) ---
+Write-SentinelLog "Revisando eventos criticos de las ultimas 24h..." "INFO"
+try {
+    $Since = (Get-Date).AddHours(-24)
+    $CriticalEvents = Get-WinEvent -LogName System, Application -MaxEvents 200 -ErrorAction SilentlyContinue |
+    Where-Object { $_.TimeCreated -ge $Since -and $_.LevelDisplayName -in @("Error", "Critical") } |
+    Sort-Object TimeCreated -Descending |
+    Select-Object -First 15
+
+    if ($CriticalEvents) {
+        foreach ($ev in $CriticalEvents) {
+            $IsKnownNoise = (
+                $ev.ProviderName -eq "Microsoft-Windows-DistributedCOM" -and
+                $ev.Id -eq 10010
+            )
+
+            if ($IsKnownNoise) { continue }
+
+            $MessagePreview = if ($null -ne $ev.Message) {
+                $ev.Message.Substring(0, [Math]::Min(120, $ev.Message.Length))
+            }
+            else {
+                "N/A"
+            }
+
+            $EventMessage = "Evento critico: [$($ev.ProviderName)] Id=$($ev.Id) Time=$($ev.TimeCreated) Msg=$MessagePreview"
+            Add-AuditFinding "Evento critico" "[$($ev.ProviderName)] Id=$($ev.Id) Time=$($ev.TimeCreated) Msg=$MessagePreview" "ERROR"
+            Write-SentinelLog $EventMessage "ERROR"
+        }
+    }
+    else {
+        Write-SentinelLog "Event Viewer: sin errores criticos en las ultimas 24h" "INFO"
+    }
+}
+catch {
+    Write-SentinelLog "No se pudo auditar Event Viewer" "WARN"
+}
+
+# --- 5f. Conexiones de red sospechosas (Get-NetTCPConnection) ---
+Write-SentinelLog "Verificando conexiones TCP sospechosas..." "INFO"
+try {
+    $TcpConn = Get-NetTCPConnection -ErrorAction SilentlyContinue
+
+    if ($null -eq $TcpConn) {
+        Write-SentinelLog "Red: sin conexiones TCP activas" "INFO"
+    }
+    else {
+        $KnownSafeProcesses = @("msedge", "explorer", "svchost", "Code", "codex", "chrome", "GoogleChrome", "RuntimeBroker", "SearchApp", "GoogleCrashHandler")
+
+        $Suspicious = foreach ($Conn in $TcpConn) {
+            $IsExpectedConnection = $Conn.RemoteAddress -in @("127.0.0.1", "::1", "0.0.0.0", "::") -or $Conn.RemotePort -in @(80, 443, 53)
+            if ($Conn.State -ne "Established") { continue }
+            if ($IsExpectedConnection) { continue }
+
+            $Proc = Get-Process -Id $Conn.OwningProcess -ErrorAction SilentlyContinue
+            $ProcName = if ($null -ne $Proc) { $Proc.ProcessName } else { $null }
+            $IsKnownSafe = $ProcName -in $KnownSafeProcesses
+            $IsPortSuspicious = $Conn.RemotePort -in @(4444, 4445, 5555, 3389, 8080, 8888)
+
+            if ($IsPortSuspicious -or (-not $IsKnownSafe -and $Conn.OwningProcess -gt 0)) {
+                $Conn
+            }
+        }
+
+        $Suspicious = $Suspicious | Select-Object -First 20
+
+        if ($Suspicious) {
+            foreach ($conn in $Suspicious) {
+                $Process = Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue
+                $ProcName = if ($Process) { $Process.ProcessName } else { "N/A" }
+                $ConnMessage = "Conexion sospechosa: Local=$($conn.LocalAddress):$($conn.LocalPort) -> Remote=$($conn.RemoteAddress):$($conn.RemotePort) Proc=$ProcName State=$($conn.State)"
+                Add-AuditFinding "Conexion sospechosa" "Local=$($conn.LocalAddress):$($conn.LocalPort) -> Remote=$($conn.RemoteAddress):$($conn.RemotePort) Proc=$ProcName State=$($conn.State)" "WARN"
+                Write-SentinelLog $ConnMessage "WARN"
+            }
+        }
+        else {
+            Write-SentinelLog "Red: sin conexiones TCP sospechosas detectadas" "INFO"
+        }
+    }
+}
+catch {
+    Write-SentinelLog "No se pudo auditar conexiones TCP sospechosas" "WARN"
+}
+
 # --- 5c. Audio Stack Watchdog (KB5094126 DPC Storm Prevention) ---
 # [FIX-6] v5.3: Detects REAL-TIME anomaly via delta sampling, not accumulated CPU time.
 # Get-Process .CPU is TotalProcessorTime (seconds since process start), NOT instant %.
@@ -400,6 +536,12 @@ Write-SentinelLog "Bytes Liberados:     $SavedBytes B ($SavedMB MB)"
 Write-SentinelLog "Bloqueados/Uso:      $Script:LockedCount"
 Write-SentinelLog "Delta Disco (ref):   $DiskDeltaMB MB" "INFO"
 Write-SentinelLog "Nota: Delta disco es referencia del sistema, no un indicador de espacio recuperado real." "WARN"
+Write-SentinelLog "Hallazgos de auditoria: $($Script:AuditFindings.Count)" "INFO"
+if ($Script:AuditFindings.Count -gt 0) {
+    foreach ($Finding in $Script:AuditFindings) {
+        Write-SentinelLog $Finding.Message $Finding.Level
+    }
+}
 
 # [NEW-1] Reportar modo de ejecucion en el log de auditoria
 if ($Script:GuardedMode) {
