@@ -1,9 +1,9 @@
-# 🛡️ Sentinel V5 "Apex" ⚡
+# 🛡️ Sentinel V7 "Apex" ⚡
 
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-blue?style=for-the-badge&logo=powershell&logoColor=white)](https://docs.microsoft.com/en-us/powershell/)
 [![Windows](https://img.shields.io/badge/Windows-11-0078D4?style=for-the-badge&logo=windows&logoColor=white)](https://www.microsoft.com/windows)
 [![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-5.4%20Apex-red?style=for-the-badge)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/Version-7.0%20Apex-red?style=for-the-badge)](CHANGELOG.md)
 [![Security](https://img.shields.io/badge/Security-Audit%20Ready-orange?style=for-the-badge&logo=shield)](README.md)
 [![Maintained](https://img.shields.io/badge/Maintained-Yes-brightgreen?style=for-the-badge)](https://github.com/Lucas18062025)
 [![CONTRIBUTORS](https://img.shields.io/github/contributors/Lucas18062025/Sentinel?style=for-the-badge&color=brightgreen)](https://github.com/Lucas18062025/Sentinel/graphs/contributors)
@@ -141,7 +141,7 @@ C:\Logs\Sentinel\
 
 **Contenido del log:**
 ```
-[15:09:29] [SUCCESS] SENTINEL V5 APEX - INICIANDO
+[15:09:29] [SUCCESS] SENTINEL V7 APEX - INICIANDO
 [15:09:30] [WARN]    Analizando: C:\Users\...\AppData\Local\Temp
 [15:09:31] [INFO]    Firewall [Domain]: ACTIVO
 [15:09:31] [INFO]    Firewall [Private]: ACTIVO
