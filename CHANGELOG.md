@@ -4,6 +4,21 @@ Todas las versiones siguen el estándar [Semantic Versioning](https://semver.org
 
 ---
 
+## [7.0] — 2026-09-10 — "Apex"
+
+### Añadido
+- Detección de conexiones TCP sospechosas (`Get-NetTCPConnection`)
+- Auditoría de Event Viewer: 0 errores críticos en 24h
+- Verificación de salud de Windows Update Orchestrator
+- Verificación de Audio Stack (System + DWM)
+- Resumen ejecutivo con log de evidencia (`C:\Logs\Sentinel\`)
+
+### Mejorado
+- Banner y documentación alineados a V7 Apex
+- Métricas reales de corrida: 1.486 archivos, 658 eliminados, 52MB en ~11s
+
+---
+
 ## [5.0] — 2026-03-27 — "Apex"
 
 ### Añadido

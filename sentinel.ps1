@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Sentinel V5 "Apex" - Motor de Mantenimiento Unificado.
+    Sentinel V7 "Apex" - Motor de Mantenimiento Unificado.
 .DESCRIPTION
     Combinacion de streaming de bajo consumo, progreso optimizado por bloques,
     manejo de concurrencia de logs, auditoria de seguridad real
@@ -35,6 +35,39 @@
               y potencialmente corromper el estado de Windows Update. Se aborta la
               reparacion con log ERROR si se detecta instalacion en curso, en linea con
               la regla fundamental: el host SIEMPRE debe permanecer operativo.
+    v5.4.1 - Correccion de falso positivo en Event Viewer (sesion 09/09/2026):
+      [FIX-8] Evento 'disk' Id=11 (error de controladora) sobre discos con BusType=USB
+              se reclasifica de ERROR critico a WARN informativo. Causa raiz: Automatic
+              Maintenance enumera todos los volumenes del sistema (incl. pendrives USB)
+              y un dispositivo lento no responde a tiempo al poll, generando el evento
+              sin que exista falla de hardware real (confirmado: sin desconexion PnP,
+              ReadErrorsTotal=0, Wear=0). El resumen ejecutivo ya no cuenta esto como
+              hallazgo critico del host.
+      [FIX-9] .tmp removido de $ExclusionRegex. Causa raiz: la exclusion estatica por
+              extension bloqueaba TODO archivo .tmp sin importar antiguedad ni uso real,
+              pese a que el try/catch de Remove-Item ya detecta bloqueos por archivo
+              individual (LockedCount). Confirmado en campo: 71 archivos / 23.5 MB
+              .tmp elegibles (>15 min) quedaban sin limpiar en cada corrida.
+      [FIX-10] Add-AuditFinding devuelve $Entry (linea ~130) pero los 3 call sites no
+               capturaban el retorno. PowerShell acumula objetos sueltos no capturados
+               en el pipeline y los vuelca como tabla auto-formateada al cerrar el script,
+               duplicando visualmente los hallazgos ya logueados (log en vivo + resumen
+               ejecutivo son intencionales; esta tercera tabla no lo era). Los 3 call
+               sites ahora envuelven la llamada en [void](...) para descartar el retorno.
+    v5.5 - Optimizacion y endurecimiento (sesion 09/09/2026):
+      [FIX-10b] Causa raiz de FIX-10: se elimina `return $Entry` en Add-AuditFinding
+               (fix unico en la fuente, se retiran los 3 [void] en call sites).
+      [OPT-1] ExclusionRegex por archivo -> hashset $ExcludedExt O(1) + -like solo lock.
+      [OPT-2] DetailedLog: buffer List[string] por path + 1x Add-Content (antes N aperturas).
+      [OPT-3] Servicios: Get-CimInstance Win32_Service + Where -> Get-Service -Name (filtro nativo).
+      [OPT-4] Event Viewer: Where post-filtro -> -FilterHashtable server-side (Level 1,2 + StartTime).
+      [OPT-5] TCP: Get-Process por conexion -> cache unica Id->Name (elimina N+1 queries).
+      [FIX-11] Audio watchdog solo diagnostica por defecto; reinicio solo con -Force
+               (regla host-operativo, igual que FIX-7: no cortar audio en curso sin consentimiento).
+      [FIX-12] DriveInfo exige "C:\"; "C:" solo lanza ArgumentException -> se normaliza con + '\'.
+      [OPT-6] Dedup de eventos por Provider+Id+TimeCreated (mismo evento en System y
+               Application llegaba doble; BitLocker x6 = 3 reales). BitLocker desinstalado
+               en el host explica el ruido: no se filtra, solo se desduplica.
 #>
 
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium')]
@@ -50,8 +83,9 @@ $LogDir = Join-Path $env:SystemDrive "Logs\Sentinel"
 $LogFile = Join-Path $LogDir "Sentinel_$Timestamp.log"
 $Targets = @($env:TEMP, "C:\Windows\Temp")
 
-# Exclusiones Optimizadas (Regex Unificado)
-$ExclusionRegex = '(\.log$|\.etl$|\.evtx$|\.dat$|\.tmp$|\.cache$|\.bak$|-lock-)'
+# Exclusiones: hashset O(1) por extension + wildcard solo para lock (sin regex por archivo)
+# [FIX-9] .tmp NO se excluye: el try/catch de Remove-Item ya detecta bloqueos reales.
+$ExcludedExt = @{ '.log' = $true; '.etl' = $true; '.evtx' = $true; '.dat' = $true; '.cache' = $true; '.bak' = $true }
 
 # Inicializacion de Contadores
 $Script:DeletedCount = 0
@@ -65,7 +99,8 @@ $Script:AudioWatchdogCooldownUntil = @{ System = [DateTime]::MinValue; DWM = [Da
 $Script:AuditFindings = @()
 
 # [FIX-5] DriveInfo en vez de Get-PSDrive: lectura directa al FS, sin cache de sesion PS
-$SystemDriveLetter = $env:SystemDrive.TrimEnd('\')
+# DriveInfo exige "C:\" (con backslash); "C:" solo lanza ArgumentException.
+$SystemDriveLetter = $env:SystemDrive.TrimEnd('\') + '\'
 try {
     $DiskBefore = ([System.IO.DriveInfo]::new($SystemDriveLetter)).AvailableFreeSpace
 }
@@ -113,10 +148,10 @@ function Add-AuditFinding {
     }
 
     $Script:AuditFindings += $Entry
-    return $Entry
+    # sin return: devolver $Entry volcaba tabla auto-formateada al cerrar el script (FIX-10 raiz)
 }
 
-Write-SentinelLog "SENTINEL V5.4 APEX - INICIANDO" "SUCCESS"
+Write-SentinelLog "SENTINEL V7 APEX - INICIANDO" "SUCCESS"
 
 # --- 4. Motor de Limpieza (Streaming de 2 Etapas con Resguardo de Instaladores) ---
 
@@ -143,6 +178,8 @@ foreach ($Path in $Targets) {
     if (Test-Path $Path) {
         Write-SentinelLog "Analizando: $Path" "WARN"
         $PathCounter = 0
+        # buffer: 1x Add-Content al cerrar el path en vez de N aperturas (DetailedLog con miles de archivos)
+        $PathLogBuffer = [Collections.Generic.List[string]]::new()
 
         # [FIX-2] -File filtra solo archivos a nivel de API del FileSystem
         # Elimina el chequeo (-not $_.PSIsContainer) dentro del pipeline
@@ -156,9 +193,9 @@ foreach ($Path in $Targets) {
                 Write-Progress -Activity "Limpiando $Path" -Status "Procesados: $PathCounter archivos"
             }
 
-            # [FIX-1] Usar $Cutoff pre-computado (no mas Get-Date por iteracion)
+            # hashset O(1) + wildcard: sin regex por archivo (miles de evaluaciones por corrida)
             $IsOld = $_.LastWriteTime -lt $Cutoff
-            $IsExcluded = $_.Name -match $ExclusionRegex
+            $IsExcluded = $ExcludedExt.ContainsKey($_.Extension) -or ($_.Name -like '*-lock-*')
 
             # PSIsContainer ya no es necesario: -File garantiza que son archivos
             if ($IsOld -and -not $IsExcluded) {
@@ -169,7 +206,7 @@ foreach ($Path in $Targets) {
                         Remove-Item $ItemPath -Force -ErrorAction Stop
                         $Script:DeletedCount++
                         $Script:BytesFreed += $ItemSize   # [FIX-5] Sumar bytes reales liberados
-                        if ($DetailedLog) { Write-SentinelLog "OK: $($_.Name)" "INFO" }
+                        if ($DetailedLog) { $PathLogBuffer.Add($_.Name) | Out-Null }
                     }
                 }
                 catch {
@@ -181,6 +218,9 @@ foreach ($Path in $Targets) {
         # [FIX-3] Cerrar explicitamente la barra de progreso al terminar cada path
         # Sin esto queda una barra "fantasma" congelada en pantalla
         Write-Progress -Activity "Limpiando $Path" -Completed
+        if ($DetailedLog -and $PathLogBuffer.Count -gt 0) {
+            $PathLogBuffer | ForEach-Object { "OK: $_" } | Add-Content $LogFile -ErrorAction SilentlyContinue
+        }
     }
 }
 
@@ -293,15 +333,15 @@ try {
         "Spooler"
     )
 
-    $ServiceAudit = Get-CimInstance Win32_Service -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -in $CriticalServices }
+    $ServiceAudit = Get-Service -Name $CriticalServices -ErrorAction SilentlyContinue
 
     if ($null -ne $ServiceAudit) {
         foreach ($svc in $ServiceAudit) {
-            $IsNormallyIdle = ($svc.Name -eq "wuauserv" -and $svc.StartMode -eq "Manual" -and $svc.State -eq "Stopped")
-            if (($svc.State -ne "Running") -and -not $IsNormallyIdle) {
-                $SvcMessage = "Servicio anomalo: [$($svc.Name)] Estado=$($svc.State) StartMode=$($svc.StartMode)"
-                Add-AuditFinding "Servicio anomalo" "[$($svc.Name)] Estado=$($svc.State) StartMode=$($svc.StartMode)" "WARN"
+            # Get-Service no expone StartMode: solo Estado anomalo != Running (wuauserv Manual/Stopped es normal)
+            $IsNormallyIdle = ($svc.Name -eq "wuauserv" -and $svc.StartType -eq "Manual" -and $svc.Status -eq "Stopped")
+            if (($svc.Status -ne "Running") -and -not $IsNormallyIdle) {
+                $SvcMessage = "Servicio anomalo: [$($svc.Name)] Estado=$($svc.Status) StartType=$($svc.StartType)"
+                Add-AuditFinding "Servicio anomalo" "[$($svc.Name)] Estado=$($svc.Status) StartType=$($svc.StartType)" "WARN"
                 Write-SentinelLog $SvcMessage "WARN"
             }
         }
@@ -318,8 +358,9 @@ catch {
 Write-SentinelLog "Revisando eventos criticos de las ultimas 24h..." "INFO"
 try {
     $Since = (Get-Date).AddHours(-24)
-    $CriticalEvents = Get-WinEvent -LogName System, Application -MaxEvents 200 -ErrorAction SilentlyContinue |
-    Where-Object { $_.TimeCreated -ge $Since -and $_.LevelDisplayName -in @("Error", "Critical") } |
+    # filtrado server-side: el motor de eventos descarta antes de subir objetos a PS (vs MaxEvents 200 + Where)
+    $CriticalEvents = Get-WinEvent -FilterHashtable @{ LogName = @('System', 'Application'); Level = @(1, 2); StartTime = $Since } -MaxEvents 100 -ErrorAction SilentlyContinue |
+    Sort-Object ProviderName, Id, @{ Expression = { $_.TimeCreated.ToString('yyyyMMddHHmmss') } } -Unique | # [OPT-6b] precision de segundo: el mismo evento duplica ticks (23:43:41.333 x2) y el dedup exacto no colapsaba nada (6->6); con segundo colapsa (6->3)
     Sort-Object TimeCreated -Descending |
     Select-Object -First 15
 
@@ -331,6 +372,25 @@ try {
             )
 
             if ($IsKnownNoise) { continue }
+
+            # [FIX-8] Evento 'disk' Id=11 (error de controladora) sobre discos USB es ruido:
+            # Automatic Maintenance enumera todos los volumenes y un pendrive lento no responde
+            # a tiempo al poll. No indica falla de hardware (confirmado: sin desconexion PnP,
+            # ReadErrorsTotal=0, Wear=0). Se baja a WARN en vez de ERROR critico.
+            if ($ev.ProviderName -eq "disk" -and $ev.Id -eq 11 -and $ev.Message -match '\\Device\\Harddisk(\d+)\\DR\d+') {
+                $DiskNumber = [int]$Matches[1]
+                try {
+                    $DiskBusType = (Get-Disk -Number $DiskNumber -ErrorAction Stop).BusType
+                }
+                catch {
+                    $DiskBusType = "Desconocido"
+                }
+
+                if ($DiskBusType -eq "USB") {
+                    Write-SentinelLog "Evento disco USB (no critico): Id=11 Time=$($ev.TimeCreated) Disk=$DiskNumber BusType=USB" "WARN"
+                    continue
+                }
+            }
 
             $MessagePreview = if ($null -ne $ev.Message) {
                 $ev.Message.Substring(0, [Math]::Min(120, $ev.Message.Length))
@@ -362,14 +422,16 @@ try {
     }
     else {
         $KnownSafeProcesses = @("msedge", "explorer", "svchost", "Code", "codex", "chrome", "GoogleChrome", "RuntimeBroker", "SearchApp", "GoogleCrashHandler")
+        # cache 1x: evita N llamadas a Get-Process (una por conexion Established no esperada)
+        $ProcCache = @{}
+        Get-Process -ErrorAction SilentlyContinue | ForEach-Object { $ProcCache[$_.Id] = $_.ProcessName }
 
         $Suspicious = foreach ($Conn in $TcpConn) {
             $IsExpectedConnection = $Conn.RemoteAddress -in @("127.0.0.1", "::1", "0.0.0.0", "::") -or $Conn.RemotePort -in @(80, 443, 53)
             if ($Conn.State -ne "Established") { continue }
             if ($IsExpectedConnection) { continue }
 
-            $Proc = Get-Process -Id $Conn.OwningProcess -ErrorAction SilentlyContinue
-            $ProcName = if ($null -ne $Proc) { $Proc.ProcessName } else { $null }
+            $ProcName = $ProcCache[$Conn.OwningProcess]
             $IsKnownSafe = $ProcName -in $KnownSafeProcesses
             $IsPortSuspicious = $Conn.RemotePort -in @(4444, 4445, 5555, 3389, 8080, 8888)
 
@@ -382,8 +444,8 @@ try {
 
         if ($Suspicious) {
             foreach ($conn in $Suspicious) {
-                $Process = Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue
-                $ProcName = if ($Process) { $Process.ProcessName } else { "N/A" }
+                $ProcName = $ProcCache[$conn.OwningProcess]
+                if (-not $ProcName) { $ProcName = "N/A" }
                 $ConnMessage = "Conexion sospechosa: Local=$($conn.LocalAddress):$($conn.LocalPort) -> Remote=$($conn.RemoteAddress):$($conn.RemotePort) Proc=$ProcName State=$($conn.State)"
                 Add-AuditFinding "Conexion sospechosa" "Local=$($conn.LocalAddress):$($conn.LocalPort) -> Remote=$($conn.RemoteAddress):$($conn.RemotePort) Proc=$ProcName State=$($conn.State)" "WARN"
                 Write-SentinelLog $ConnMessage "WARN"
@@ -474,8 +536,15 @@ try {
         if ($sysDelta -gt $SysThreshold) { $TriggerReason += "System" }
         if ($dwmDelta -gt $DwmThreshold) { $TriggerReason += "DWM" }
 
-        Write-SentinelLog "ALERTA Audio: $WatchdogDiagnosis | trigger=threshold-exceeded | reason=$($TriggerReason -join ',') | accion=reinicio de stack | cooldown=${CooldownSeconds}s" "WARN"
+        Write-SentinelLog "ALERTA Audio: $WatchdogDiagnosis | trigger=threshold-exceeded | reason=$($TriggerReason -join ',') | cooldown=${CooldownSeconds}s" "WARN"
 
+        # Regla host-operativo (igual que FIX-7): el watchdog por defecto solo diagnostica.
+        # El reinicio toca Audiosrv/EndpointBuilder y corta el audio en curso -> solo con -Force.
+        if (-not $Force) {
+            Write-SentinelLog "Accion requerida: re-ejecuta con -Force para reiniciar el audio stack, o reinicia Audiosrv manual." "WARN"
+            $Script:AudioRestarted = $false
+        }
+        else {
         # Restart audio stack - safe, reversible, no data loss
         Stop-Service  "AudioEndpointBuilder" -Force -ErrorAction SilentlyContinue
         Stop-Service  "Audiosrv"             -Force -ErrorAction SilentlyContinue
@@ -493,6 +562,7 @@ try {
 
         Write-SentinelLog "Audio Stack reiniciado. Log: $WatchdogLog" "SUCCESS"
         $Script:AudioRestarted = $true
+        }
     }
     else {
         $MissingSampleNote = if (-not $sysPresent -or -not $dwmPresent) { " | note=proceso ausente en una de las muestras; delta forzado a 0" } else { "" }
