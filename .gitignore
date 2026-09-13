@@ -2,6 +2,9 @@
 *.log
 Logs/
 
+# Respaldos locales (ej: Sentinel.ps1.bak en C:\Limpieza) - no publicar
+*.bak
+
 # Archivos de sistema Windows
 Thumbs.db
 desktop.ini

@@ -79,9 +79,10 @@ param(
 
 # --- 1. Configuracion de Entorno (Optimizacion Inicial) ---
 $Timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+$WinDir = $env:SystemRoot  # portable: no asumir C:\Windows
 $LogDir = Join-Path $env:SystemDrive "Logs\Sentinel"
 $LogFile = Join-Path $LogDir "Sentinel_$Timestamp.log"
-$Targets = @($env:TEMP, "C:\Windows\Temp")
+$Targets = @($env:TEMP, (Join-Path $WinDir "Temp"))
 
 # Exclusiones: hashset O(1) por extension + wildcard solo para lock (sin regex por archivo)
 # [FIX-9] .tmp NO se excluye: el try/catch de Remove-Item ya detecta bloqueos reales.
@@ -132,7 +133,7 @@ function Write-SentinelLog {
 # --- 3. Validacion de Privilegios ---
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     Write-Error "CRITICO: Debes ejecutar como Administrador."
-    return
+    exit 1
 }
 
 function Add-AuditFinding {
@@ -259,7 +260,8 @@ try {
         }
 
         # Verificar si el DataStore existe - si no existe, Windows ya esta en bucle activo
-        $DataStorePath = "C:\Windows\SoftwareDistribution\DataStore\DataStore.edb"
+        $DataStoreDir = Join-Path $WinDir "SoftwareDistribution\DataStore"
+        $DataStorePath = Join-Path $DataStoreDir "DataStore.edb"
         if (-not (Test-Path $DataStorePath)) {
             Write-SentinelLog "CRITICO: DataStore.edb no encontrado - bucle activo detectado." "ERROR"
         }
@@ -284,9 +286,9 @@ try {
                 Stop-Service -Name "UsoSvc", "wuauserv", "cryptsvc" -Force -ErrorAction SilentlyContinue
 
                 # Paso 2: Aislar el DataStore corrupto (mismo procedimiento del 22/05)
-                $OldStore = "C:\Windows\SoftwareDistribution\DataStore.old"
+                $OldStore = "$DataStoreDir.old"
                 if (Test-Path $OldStore) { Remove-Item $OldStore -Recurse -Force -ErrorAction SilentlyContinue }
-                Rename-Item -Path "C:\Windows\SoftwareDistribution\DataStore" `
+                Rename-Item -Path $DataStoreDir `
                     -NewName "DataStore.old" -ErrorAction SilentlyContinue
 
                 # Paso 3: Reiniciar servicios - Windows reconstruye DataStore.edb automaticamente
@@ -306,7 +308,7 @@ try {
             # Sin -Force: solo avisar, no tocar nada
             Write-SentinelLog "Accion requerida: ejecuta Sentinel con -Force para auto-reparar, o corre manualmente:" "WARN"
             Write-SentinelLog "  Stop-Service UsoSvc,wuauserv,cryptsvc -Force" "WARN"
-            Write-SentinelLog "  Rename-Item C:\Windows\SoftwareDistribution\DataStore DataStore.old" "WARN"
+            Write-SentinelLog "  Rename-Item $DataStoreDir DataStore.old" "WARN"
             Write-SentinelLog "  Start-Service cryptsvc,wuauserv,UsoSvc" "WARN"
         }
     }
