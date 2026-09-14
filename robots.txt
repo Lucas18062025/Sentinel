@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://sentinel.lucaslean1806.workers.dev/sitemap.xml
