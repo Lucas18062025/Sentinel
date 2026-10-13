@@ -3,3 +3,5 @@
 worker.js
 wrangler.toml
 .assetsignore
+# Script auxiliar: versionado en GitHub, no lo usa index.html.
+tools/
