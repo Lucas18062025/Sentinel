@@ -17,7 +17,8 @@ const SEC_HEADERS = {
 const CSP =
     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
     "img-src 'self' data: https:; font-src 'self'; connect-src 'self'; " +
-    "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
+    "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; " +
+    "report-uri /api/csp-report";
 
 const GOOGLE_FILE = "/google0cbe515c88088343.html";
 const GOOGLE_BODY = "google-site-verification: google0cbe515c88088343.html";
@@ -35,6 +36,22 @@ async function secAssets(request, env) {
 export default {
     async fetch(request, env) {
         const url = new URL(request.url);
+        // Colector de reportes CSP: el navegador avisa cada bloqueo.
+        if (url.pathname === "/api/csp-report") {
+            if (request.method !== "POST") {
+                return new Response("Method Not Allowed", {
+                    status: 405,
+                    headers: { ...SEC_HEADERS },
+                });
+            }
+            try {
+                const report = await request.json();
+                console.log("[csp-report]", JSON.stringify(report).slice(0, 2000));
+            } catch {
+                // cuerpo vacío o inválido: igual se responde 204
+            }
+            return new Response(null, { status: 204, headers: { ...SEC_HEADERS } });
+        }
         if (url.pathname === GOOGLE_FILE) {
             return new Response(GOOGLE_BODY, {
                 headers: {
